@@ -264,7 +264,7 @@ class EngleGranger(object):
         self.ols1.fit(self.X1,self.X2)
         self.spread1 = self.ols1.residual.flatten()
         self.adf1=ADF()
-        self.adf1.evaluate(spread1)
+        self.adf1.evaluate(self.spread1)
         
         self.ols2 = OLS()
         self.ols2.fit(self.X2,self.X1)
