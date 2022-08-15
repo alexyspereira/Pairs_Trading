@@ -319,7 +319,7 @@ class EngleGranger(object):
         self.ou_process_params = {
             'mue':self.mue,
             'H':self.half_life,
-            'sigma':self.theta,           
+            'sigma':self.sigma,           
             'theta':self.theta,
         }
         
