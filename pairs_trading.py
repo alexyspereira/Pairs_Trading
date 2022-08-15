@@ -120,9 +120,11 @@ class PairTradingBacktest(object):
 		xlabel,ylabel = self.xy_label
 		x_series = self.X if type(self.X) is pd.Series else pd.Series(self.X)
 		y_series = self.Y if type(self.Y) is pd.Series else pd.Series(self.Y)
-		
-		x_series_daily_returns = x_series.pct_change().fillna(0) 
-		y_series_daily_return = y_series.pct_change().fillna(0) 
+		x_series_sign_shift = np.sign(x_series.shift(1))		
+		y_series_sign_shift = np.sign(y_series.shift(1))
+
+		x_series_daily_returns = (x_series.pct_change()*x_series_sign_shift).fillna(0) 
+		y_series_daily_return = (y_series.pct_change()*y_series_sign_shift).fillna(0) 
 		
 		coint_weights= self.coint_weights.reshape(1,-1)
 		
