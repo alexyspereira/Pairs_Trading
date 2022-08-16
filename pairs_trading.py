@@ -147,7 +147,10 @@ class PairTradingBacktest(object):
 			output.append(signals_df)
 		
 		self.back_test_results = pd.concat(output).reset_index(drop=True)
-		
+		self.back_test_results['flag_all_null'] =self.back_test_results.groupby("bounds_id")['signal'].transform(lambda x: x.isnull().mean())
+		f=self.back_test_results['flag_all_null']<1.0
+		self.back_test_results=self.back_test_results.loc[f,:].copy().reset_index(drop=True) 
+
 		self.back_test_results['total_period_day']=self.back_test_results.groupby("bounds_id")['day'].transform(lambda x: self.numdays(x))
 
 		self.back_test_results['strategy_daily_vol']=self.back_test_results.groupby("bounds_id")['trade_daily_return'].transform('std')
@@ -398,6 +401,8 @@ class TradeAnalyzer(object):
 		self.return_series['es_99_1day'] = self.expected_shortfall(mean_return, std_return, 0.99,1)
 		self.return_series['es_99_10day'] = self.expected_shortfall(mean_return, std_return, 0.99,10)
 		self.return_series['sharpe'] =self.compute_sharpe(self.return_series['excess_daily_return'])
+		self.return_series['n_exceedances_var_99_10day'] = (self.return_series_full['trade_daily_return'] < -self.return_series_full['rolling_var_99_10day']).sum() 
+
 		x = sm.add_constant(self.return_series['excess_mkt_return'].values.reshape(-1,1))
 		y = self.return_series['trade_daily_return'].values.reshape(-1,1)		
 		self.return_series['beta'],self.return_series['alpha'],self.return_series['beta_pvalue'],self.return_series['alpha_pvalue'] =self.compute_beta(x,y)
@@ -407,10 +412,10 @@ class TradeAnalyzer(object):
 
 
 	def summary_table(self):
-		cols=['annualized_return','annualized_vol','total_return', 'alpha','sharpe','beta','beta_pvalue','alpha_pvalue','drawdown','var_99_1day','var_99_10day','es_99_1day','es_99_10day']
+		cols=['annualized_return','annualized_vol','total_return', 'alpha','sharpe','beta','beta_pvalue','alpha_pvalue','drawdown','var_99_1day','var_99_10day','es_99_1day','es_99_10day',]
 		self.summary=self.return_series[cols].max()*100
 		self.summary['alpha']=self.summary['alpha']*252
-		self.summary.index=['Annual Return','Annual Vol','Cumulative Return','Alpha (Annual)','Sharpe','Beta','Beta P-Value','Alpha P-Value','Max Drawdown','1-Day VaR 99%','10-Day VaR 99%','1-Day ES 99%','10-Day ES 99%']
+		self.summary.index=['Annual Return','Annual Vol','Cumulative Return','Alpha (Annual)','Sharpe','Beta','Beta P-Value','Alpha P-Value','Max Drawdown','1-Day VaR 99%','10-Day VaR 99%','1-Day ES 99%','10-Day ES 99%',]
 		self.summary=self.summary.to_frame().reset_index()
 		self.summary.columns=['Metric','Value (%)']
 		return self.summary
@@ -420,7 +425,7 @@ class TradeAnalyzer(object):
 	def plot_chart(series,mean, title, label_series,label_mean,figsize,xlabel,ylabel):
 		fig=plt.figure(figsize=figsize)
 		series.plot(kind='line',label=label_series)
-		mean.plot(kind='line',linestyle='--',color='red', label=label_mean)
+		if mean is not None: mean.plot(kind='line',linestyle='--',color='red', label=label_mean) 
 		plt.xlabel(xlabel)
 		plt.ylabel(ylabel)
 		plt.title(title)
@@ -463,9 +468,30 @@ class TradeAnalyzer(object):
 
 		return self.plot_chart(series,mean, title, label_series,label_mean,figsize,xlabel,ylabel)
 
+	def plot_drawdown(self,title=None,figsize=(15,7.5)):
+		series = self.return_series['drawdown']*100*-1
+		# mean= pd.Series(np.zeros(shape = self.return_series['drawdown'].shape).flatten(),index=series.index)
+		mean=None
+		label_series=r'Drawdown (%)'
+		label_mean = None
+		title=r'Drawdown (%)'
+		xlabel='Date'
+		ylabel=r'Drawdown (%)'
+		return self.plot_chart(series,mean, title, label_series,label_mean,figsize,xlabel,ylabel)
+
+	def plot_10day_var(self,title=None,figsize=(15,7.5)):
+		series = self.return_series['rolling_var_99_10day']*100
+		mean= self.return_series['var_99_10day']*100
+		label_series=r'Rolling 10-day VaR 99% (%)'
+		label_mean = r'Avg 10-day VaR 99% (%)'
+		title=r'10-day VaR 99% (%)'
+		xlabel='Date'
+		ylabel=r'10-day VaR 99% (%)'
+		return self.plot_chart(series,mean, title, label_series,label_mean,figsize,xlabel,ylabel)
+
 
 
 	def plots(self):
-		funcs = [self.plot_rolling_sharpe,self.plot_rolling_beta,self.plot_rolling_alpha]
+		funcs = [self.plot_rolling_sharpe,self.plot_rolling_beta,self.plot_rolling_alpha,self.plot_drawdown,self.plot_10day_var]
 		return {f.__name__:f() for f in funcs}
 	
