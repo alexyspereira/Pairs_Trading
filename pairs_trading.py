@@ -20,7 +20,29 @@ pd.set_option("display.max_column",999)
 
 
 class PairTradingBacktest(object):
-	def __init__(self,dates, X,Y, coint_coeffs,  mue, sigma_eq, zscores,xy_label=['X','Y'], tol=0.0):        
+	def __init__(self,dates, X,Y, coint_coeffs,  mue, sigma_eq, zscores,xy_label=['X','Y'], tol=0.0):
+
+		"""
+		Class that backtests the pair trading strategy based on cointegration by generating signals of entry and exit points
+
+		Arguments:
+		Date pd.seeries/ array with dates that will be evaluated
+		X array = independent variable of the cointegration linear regression
+		Y array = dependent variable of the cointegration linear regression
+		coint_coeffs list  = betas estimated from the cointegration linear regression expected [1, beta]
+		mue = long run mean
+		sigma_eq = equation sd deviation from OU process
+		zscores = array of z scores to be evaluated
+		xy_label = [X variable name, y variable name]
+		tol = tolerance in percentage terms to consider when spread is close to long run mean to exit the position
+
+		returns:
+
+		back_test_result: backtest result table for period considered and all z scores levels
+		summary_Table: summary statistics compute on backtest results for all z scores
+
+
+		"""      
 		self.dates=dates
 		self.X = X
 		self.Y = Y
@@ -36,6 +58,7 @@ class PairTradingBacktest(object):
 	   
 		self.tol=tol
 		
+		#computes the spread
 		self.spread = Y - coint_coeffs[-1]*X - coint_coeffs[0]
 		
 		pass
@@ -59,26 +82,51 @@ class PairTradingBacktest(object):
 
 	
 	def signal(self, spread,lower,upper,mu,current_position=0,tol=0.0):
+		"""function that computes the signal based on spread
+		1 = [1,-beta]
+		-1 = [-1,beta]
+
+		arguments:
+		spread: the spread of the series 
+		lower: lower bound to decide if enter or exits position
+		upper: upper bound to decide if enter or exits position
+		current_position: [-1,0,1] to signal if there is an open position
+		tol: tolerance in percentage to decide what is close to mu_e
+
+		"""
+
+		#if there is an open position = 1
 		if current_position==1:
+			#if spread is larger than mu_e then exits the position otherwise holds
 			if spread >= mu*(1-tol):
 				return 1, 'exit'
 			else:
 				return 1, 'hold'
+		#if there is a open position is -1
 		elif current_position==-1:
+
+			#if spread is lower than mu, then exits the position, otherwise holds
 			if spread <= mu*(1+tol):
 				return -1, 'exit'
 			else:
 				return -1, 'hold'
+		#if tbere are no open positions in the book
 		else:
+			#if the spread is higher than the upper bound then we want to enter in the position [-1,beta]
 			if spread>=upper:
 				return -1,'enter'
+			#if spread is lower than lower bound then we want to enter in the position [1,-beta]
 			elif spread <= lower:
 				return 1,'enter'
+			#otherwise no position
 			else:
 				return 0,"-"
 
 	def compute_signal(self,lower,upper):
 		
+		"""function that loops through spread array applyting the compute signal"""
+		
+		#dictionary to store esults
 		signals = {'day':[],
 				   'signal':[],
 				   'action':[],
@@ -87,22 +135,32 @@ class PairTradingBacktest(object):
 
 		signals['day'] = self.dates
 
+		#assumes that there are no position in the book
 		current_position=0
 		trade_id=0
 		for i,e in enumerate(self.spread,1):
+			#get signal and action from signal function
 			s,a = self.signal(e,lower,upper,self.mue,current_position=current_position,tol=self.tol)
+
+			#replaces no signal for null
 			s = np.nan if s==0 else s
 
+			#if reach the end of the spread and there is an open position, closes the position
 			if i==len(self.spread) and a=='hold':
 				s = signals['signal'][-1]*-1
 				a = 'exit'
 
 			signals['signal'].append(s)
 			signals['action'].append(a)
+
+			#updates trade id if there is an enter action
 			trade_id = trade_id+1 if a=='enter' else trade_id
+			
+			#replaces trade-id for null if there is not action
 			trade_id_temp = np.nan if a =='-' else trade_id
 			signals['trade_id'].append(trade_id_temp)
 
+			#updates current position to zero if the action if exit
 			current_position= 0 if a == 'exit' else s
 
 	
@@ -116,29 +174,51 @@ class PairTradingBacktest(object):
 		
 	
 	def backtest(self):
+
+		""" Generate the  backtest results for the strategies for the assets """
+
+
 		output=[]
 		xlabel,ylabel = self.xy_label
+		
+		#gets the assets series
 		x_series = self.X if type(self.X) is pd.Series else pd.Series(self.X)
 		y_series = self.Y if type(self.Y) is pd.Series else pd.Series(self.Y)
 		x_series_sign_shift = np.sign(x_series.shift(1))		
 		y_series_sign_shift = np.sign(y_series.shift(1))
 
+
+		#computes daily returns
 		x_series_daily_returns = (x_series.pct_change()*x_series_sign_shift).fillna(0) 
 		y_series_daily_return = (y_series.pct_change()*y_series_sign_shift).fillna(0) 
 		
+		#cointegration weights
 		coint_weights= self.coint_weights.reshape(1,-1)
 		
+		#loops through all the zscore levels
 		for i,(z,lower,upper) in enumerate(self.bounds,1):
+
+			#calling compute signal functiopn to generate signals and trade enty,exit points
 			signals_df = self.compute_signal(lower,upper)
+
+			#getting the raw asset
 			signals_df[f'{xlabel}'] = self.X
 			signals_df[f'{ylabel}'] = self.Y
+
+			#asset daily returns
 			signals_df[f'{xlabel}_daily_return'] = x_series_daily_returns
-			signals_df[f'{ylabel}_daily_return'] = y_series_daily_return           
+			signals_df[f'{ylabel}_daily_return'] = y_series_daily_return
+
+			#trade signals 1,-1           
 			trading_signal = signals_df['signal'].values.reshape(-1,1)
-		   
+
+			#computes trade daily return by using dot product of signal, cointegration weights multiply by x,y daily returns
 			signals_df['trade_daily_return'] = (np.dot(trading_signal, coint_weights)*signals_df[[f'{ylabel}_daily_return',f'{xlabel}_daily_return']]).sum(axis=1)
 			
+
 			signals_df['trade_daily_return'] = np.where(signals_df.signal.isnull(),np.nan,signals_df['trade_daily_return'])
+
+			#adding ids to the strategy
 			signals_df['bounds_id'] = i
 			signals_df['zscore'] = z
 			signals_df['spread']=self.spread
@@ -146,11 +226,17 @@ class PairTradingBacktest(object):
 
 			output.append(signals_df)
 		
+
+		#concatenate all the results
 		self.back_test_results = pd.concat(output).reset_index(drop=True)
+
+		#drops strategies with no trades
 		self.back_test_results['flag_all_null'] =self.back_test_results.groupby("bounds_id")['signal'].transform(lambda x: x.isnull().mean())
 		f=self.back_test_results['flag_all_null']<1.0
 		self.back_test_results=self.back_test_results.loc[f,:].copy().reset_index(drop=True) 
 
+
+		#compoutes some summary statistics
 		self.back_test_results['total_period_day']=self.back_test_results.groupby("bounds_id")['day'].transform(lambda x: self.numdays(x))
 
 		self.back_test_results['strategy_daily_vol']=self.back_test_results.groupby("bounds_id")['trade_daily_return'].transform('std')
@@ -164,7 +250,9 @@ class PairTradingBacktest(object):
 	
 	
 	def summary_tables(self):
-		
+		"""Generates summary tables with P&L metrics based on thre back test table"""
+
+		#dictionary with aggregate functions
 		dict_agg = {
 		'trade_daily_return':[self.cumulative_return,self.annualized_return,self.annualized_vol],
 		'day':[self.numdays,],
@@ -181,6 +269,7 @@ class PairTradingBacktest(object):
 
 		}
 
+		#summarizes backtest results computing statistics
 		self.trade_analysis = self.back_test_results.groupby(['bounds_id', 'trade_id','zscore']).agg(dict_agg)
 		self.trade_analysis.columns=['_'.join(c) if type(dict_agg[c[0]])==list else c[0]  for c in self.trade_analysis.columns ]
 		self.trade_analysis.reset_index(inplace=True)
@@ -197,6 +286,7 @@ class PairTradingBacktest(object):
 
 		self.summary.columns=['_'.join(c) for c in self.summary.columns]
 
+		#renames column for output
 		col_names = ['Strategy ID', 
 			 'Z-Score',
 			 '# Trades',
@@ -214,6 +304,8 @@ class PairTradingBacktest(object):
 	
 	
 	def plot_strategy(self, strategy_id,figsize=(15,7.5)):
+
+		"""Plots the trading and spread for visual analysis of the strategies implement given the strategy_id"""
 		temp = self.back_test_results.query(f"bounds_id == {strategy_id} ").copy()
 		strategy_id = temp.bounds_id.max()
 		zscore = temp.zscore.max()
@@ -241,6 +333,12 @@ class PairTradingBacktest(object):
 class TradeAnalyzer(object):
 	
 	def __init__(self,return_series_input, mkt_ticker, rf_ticker='^TYX',historical_returns=None):
+
+
+		"""
+		Class to compute rolling statistics such as rolling beta, alpha, sharpe ratio, VaR and ES given markte risk factor and risk free weightss
+
+		"""
 		self.return_series_input=return_series_input
 		self.mkt_ticker=mkt_ticker
 		self.rf_ticker=rf_ticker
@@ -348,10 +446,6 @@ class TradeAnalyzer(object):
 		rolling_std = return_series[f].rolling(window=rolling_window,min_periods=min_period).std()
 
 		zscore = stats.norm.ppf(conf_intervals)
-
-#         rolling_var = rolling_std*zscore*np.sqrt(time_horizon) - rolling_mean*time_horizon
-#         rolling_es = rolling_std*stats.norm.pdf(zscore)*np.sqrt(time_horizon)/(1-conf_intervals) - rolling_mean*time_horizon 
-
 		rolling_var = self.value_at_risk(rolling_mean,rolling_std, conf_intervals,time_horizon)
 		rolling_es = self.expected_shortfall(rolling_mean,rolling_std, conf_intervals,time_horizon)
 		
